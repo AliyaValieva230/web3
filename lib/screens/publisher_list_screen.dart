@@ -1,0 +1,183 @@
+import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
+import 'package:provider/provider.dart';
+import '../state/publisher_list_notifier.dart';
+import '../widgets/app_scaffold.dart';
+import '../widgets/entity_table.dart';
+import '../widgets/entity_card_list.dart';
+import '../models/publisher.dart';
+
+class PublisherListScreen extends StatefulWidget {
+  const PublisherListScreen({super.key});
+  @override
+  State<PublisherListScreen> createState() => _PublisherListScreenState();
+}
+
+class _PublisherListScreenState extends State<PublisherListScreen> {
+  int _selectedIndex = 3;
+
+  @override
+  Widget build(BuildContext context) {
+    return AppScaffold(
+      selectedIndex: _selectedIndex,
+      onDestinationSelected: (index) {
+        setState(() => _selectedIndex = index);
+        if (index == 0) context.go('/books');
+        else if (index == 1) context.go('/authors');
+        else if (index == 2) context.go('/genres');
+        else if (index == 3) context.go('/publishers');
+        else context.go('/readers');
+      },
+      child: Consumer<PublisherListNotifier>(
+        builder: (context, notifier, child) {
+          return Scaffold(
+            appBar: AppBar(
+              title: const Text('Издательства'),
+              actions: [
+                IconButton(
+                  icon: Icon(notifier.includeDeleted ? Icons.visibility : Icons.visibility_off),
+                  onPressed: () => notifier.updateFilters(includeDeleted: !notifier.includeDeleted),
+                ),
+                if (notifier.hasSelection)
+                  PopupMenuButton<String>(
+                    onSelected: (value) async {
+                      if (value == 'softDelete') await notifier.softDeleteSelected();
+                      else if (value == 'restore') await notifier.restoreSelected();
+                      else if (value == 'hardDelete') await notifier.hardDeleteSelected();
+                    },
+                    itemBuilder: (_) => const [
+                      PopupMenuItem(value: 'softDelete', child: Text('Логически удалить')),
+                      PopupMenuItem(value: 'restore', child: Text('Восстановить')),
+                      PopupMenuItem(value: 'hardDelete', child: Text('Физически удалить')),
+                    ],
+                  ),
+                IconButton(icon: const Icon(Icons.add), onPressed: () => context.go('/publishers/new')),
+              ],
+              bottom: PreferredSize(
+                preferredSize: const Size.fromHeight(60),
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: TextField(
+                    decoration: const InputDecoration(
+                      hintText: 'Поиск по названию',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.search),
+                    ),
+                    onChanged: notifier.updateSearch,
+                  ),
+                ),
+              ),
+            ),
+            body: _buildBody(context, notifier),
+            bottomNavigationBar: _buildPagination(context, notifier),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildBody(BuildContext context, PublisherListNotifier notifier) {
+    if (notifier.status == LoadStatus.loading) return const Center(child: CircularProgressIndicator());
+    if (notifier.status == LoadStatus.error) return Center(child: Text('Ошибка: ${notifier.error}'));
+    if (notifier.result.items.isEmpty) return const Center(child: Text('Издательства не найдены'));
+
+    final isCompact = MediaQuery.sizeOf(context).width < 600;
+
+    if (isCompact) {
+      return EntityCardList<Publisher>(
+        items: notifier.result.items,
+        idOf: (p) => p.id,
+        selected: notifier.selected,
+        onToggleSelect: notifier.toggleSelection,
+        cardBuilder: (p) => Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(p.name, style: const TextStyle(fontWeight: FontWeight.bold)),
+            if (p.address != null) Text(p.address!),
+          ],
+        ),
+        actions: (p) => [
+          IconButton(icon: const Icon(Icons.edit), onPressed: () => context.go('/publishers/${p.id}/edit')),
+          IconButton(
+            icon: const Icon(Icons.delete),
+            onPressed: () async {
+              try {
+                await notifier.deletePublisher(p.id);
+              } catch (e) {
+                if (mounted) {
+                  showDialog(
+                    context: context,
+                    builder: (_) => AlertDialog(
+                      title: const Text('Ошибка'),
+                      content: Text(e.toString()),
+                      actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('ОК'))],
+                    ),
+                  );
+                }
+              }
+            },
+          ),
+        ],
+      );
+    }
+
+    return EntityTable<Publisher>(
+      items: notifier.result.items,
+      idOf: (p) => p.id,
+      selected: notifier.selected,
+      onToggleSelect: notifier.toggleSelection,
+      sortField: notifier.sortField,
+      sortAscending: notifier.sortAscending,
+      onSort: notifier.sortBy,
+      columns: [
+        TableColumnSpec(label: 'Название', sortField: 'name', build: (p) => Text(p.name)),
+        TableColumnSpec(label: 'Адрес', build: (p) => Text(p.address ?? '-')),
+      ],
+      actions: (p) => [
+        IconButton(icon: const Icon(Icons.edit), onPressed: () => context.go('/publishers/${p.id}/edit')),
+        IconButton(
+          icon: const Icon(Icons.delete),
+          onPressed: () async {
+            try {
+              await notifier.deletePublisher(p.id);
+            } catch (e) {
+              if (mounted) {
+                showDialog(
+                  context: context,
+                  builder: (_) => AlertDialog(
+                    title: const Text('Ошибка'),
+                    content: Text(e.toString()),
+                    actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('ОК'))],
+                  ),
+                );
+              }
+            }
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPagination(BuildContext context, PublisherListNotifier notifier) {
+    if (notifier.result.items.isEmpty) return const SizedBox.shrink();
+    return Container(
+      padding: const EdgeInsets.all(8),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          IconButton(icon: const Icon(Icons.first_page), onPressed: notifier.result.page > 1 ? () => notifier.goToPage(1) : null),
+          IconButton(icon: const Icon(Icons.chevron_left), onPressed: notifier.result.page > 1 ? () => notifier.goToPage(notifier.result.page - 1) : null),
+          Text('${notifier.result.page} / ${notifier.result.totalPages}'),
+          IconButton(icon: const Icon(Icons.chevron_right), onPressed: notifier.result.page < notifier.result.totalPages ? () => notifier.goToPage(notifier.result.page + 1) : null),
+          IconButton(icon: const Icon(Icons.last_page), onPressed: notifier.result.page < notifier.result.totalPages ? () => notifier.goToPage(notifier.result.totalPages) : null),
+          const SizedBox(width: 16),
+          DropdownButton<int>(
+            value: notifier.size,
+            items: const [10, 25, 50].map((s) => DropdownMenuItem(value: s, child: Text('$s'))).toList(),
+            onChanged: (v) => notifier.setSize(v!),
+          ),
+        ],
+      ),
+    );
+  }
+}
